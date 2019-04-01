@@ -2,8 +2,8 @@
 >目标：实现一个支持HttpServer的协程池
 
 ## 第一步：让协程池正常工作 ##
-第一版gpool：参考ants开源项目架构
-第二版gpool.chan：gpool维护一个Task Channel，提交任务进channel，worker循环从channel拿任务，拿不到任务就把自己加入到空闲队列，设计初衷是减少worker频繁出队入队的加锁开销
+>第一版gpool：参考ants开源项目架构
+>第二版gpool.chan：gpool维护一个Task Channel，提交任务进channel，worker循环从channel拿任务，拿不到任务就把自己加入到空闲队列，设计初衷是减少worker频繁出队入队的加锁开销
 
 >经测试，第二版性能不如第一版，内存开销也比第一版大，原因是Task Channel的维护需要占用内存并且也有锁开销，而且众多goroutine从一个channel拿任务带来的竞争反而更加激烈。
 
@@ -141,23 +141,26 @@ SCHED 504ms: gomaxprocs=4 idleprocs=4 threads=6 spinningthreads=0 idlethreads=4 
 **已经成功复用协程，第一步目标完成~**
 ## 第二步：优化性能 ##
 
- 1.使用channel信号通知空闲worker到来，开销太大，参考ants，改为sync.Cond接受worker被放回空闲队列的信号；
- 2.worker使用无缓冲任务channel，为避免channel阻塞改为使用有缓冲的任务channel，缓冲容量设为5;
+ 
+
+1. 使用channel信号通知空闲worker到来，开销太大，参考ants，改为sync.Cond接受worker被放回空闲队列的信号；
+2. worker使用无缓冲任务channel，为避免channel阻塞改为使用有缓冲的任务channel，缓冲容量设为1;
+
 >考虑中：目前执行一个任务就被放回队列，而放回队列需要加锁。可尝试控制任务队列剩余任务数量达到阈值才将worker放回队列。
 
 ## 第三步：探索HttpServer工作流程，加入协程池 ##
 >go version go1.9.2 linux/amd64
 
 >net/http/server.go
-		-->2970:http.ListenAndServe
-		--> 2705:Server.ListenAndServe
-		--> 2756:Server.Serve
-		--> 2798:go *http.conn.serve 这里开一个goroutine处理accept的连接
-		--> 1719:*conn.serve
-		--> 2689:serverHandler.SereHTTP
-		--> 2331:DefaultServeMux.ServeHTTP
-		--> h = mux.Handler(r)2275:根据path匹配handler
-		--> h.ServeHttp(w,r):匹配到经由http.Handle/http.HandleFunc注册的handler执行对应的函数
+>2970:http.ListenAndServe
+>2705:Server.ListenAndServe
+>2756:Server.Serve
+>2798:go *http.conn.serve 这里开一个goroutine处理accept的连接
+>1719:*conn.serve
+>2689:serverHandler.SereHTTP
+>2331:DefaultServeMux.ServeHTTP
+>h = mux.Handler(r)2275:根据path匹配handler
+>h.ServeHttp(w,r):匹配到经由http.Handle/http.HandleFunc注册的handler执行对应的函数
 
 
 **探索过程中遇到一个问题：**
